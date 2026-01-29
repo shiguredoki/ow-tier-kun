@@ -11,12 +11,23 @@ const HERO_ROLES = {
     support: [ "アナ", "イラリー", "キリコ", "ジュノ", "ゼニヤッタ", "バティスト", "ブリギッテ", "マーシー", "モイラ", "ライフウィーバー", "ルシオ" ]
 };
 
-function getTierFromTScore(tScore) {
-    if (tScore >= 60) return 'S';
-    if (tScore >= 55) return 'A';
-    if (tScore >= 50) return 'B';
-    if (tScore >= 45) return 'C';
+// 偏差値(T-Score)からランクを判定
+// 50が平均。60以上でS。
+function getTierFromScore(score) {
+    if (score >= 60) return 'S';
+    if (score >= 55) return 'A';
+    if (score >= 50) return 'B';
+    if (score >= 45) return 'C';
     return 'D';
+}
+
+// 標準偏差などを計算する便利関数
+function calculateStats(values) {
+    const total = values.reduce((sum, v) => sum + v, 0);
+    const avg = total / (values.length || 1);
+    const variance = values.reduce((sum, v) => sum + Math.pow(v - avg, 2), 0) / (values.length || 1);
+    const stdDev = Math.sqrt(variance) || 1; // 0除算防止
+    return { avg, stdDev };
 }
 
 const server = http.createServer((req, res) => {
@@ -28,44 +39,30 @@ const server = http.createServer((req, res) => {
 
         fs.readFile('./data.json', (err, content) => {
             if (err) {
-                // ファイルが無い場合のエラーハンドリング
-                res.writeHead(500);
-                res.end(JSON.stringify({ error: 'Data file missing' }));
-                return;
+                res.writeHead(500); res.end(JSON.stringify({ error: 'Data file missing' })); return;
             }
 
             let json;
-            try {
-                json = JSON.parse(content);
-            } catch (e) {
-                res.writeHead(500);
-                res.end(JSON.stringify({ error: 'Invalid JSON' }));
-                return;
-            }
+            try { json = JSON.parse(content); } catch (e) { res.writeHead(500); res.end(JSON.stringify({ error: 'Invalid JSON' })); return; }
             
-            // データ取得
             const mapData = json.data[targetMap] || json.data['all-maps'];
             
-            // マップデータが無い場合（まだスクレイピングしてない等）
             if (!mapData) {
-                // 存在するマップリストだけ返してあげる
-                const availableMaps = Object.keys(json.data);
+                // マップデータが無い場合
+                const availableMaps = Object.keys(json.data).filter(k => k !== 'meta' && k !== 'lastUpdated');
                 res.writeHead(200, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ 
-                    tierData: {S:[],A:[],B:[],C:[],D:[]}, 
-                    meta: {avg:0}, 
-                    availableMaps: availableMaps,
-                    error: "Map data not ready" 
-                }));
+                res.end(JSON.stringify({ tierData: {S:[],A:[],B:[],C:[],D:[]}, meta: {avg:0}, availableMaps, error: "Map data not ready" }));
                 return;
             }
 
+            // ■ ヒーローデータの統合とフィルタリング
             let rawHeroes = [];
-
             if (targetRole === 'all') {
                 const tanks = mapData.tank ? (mapData.tank[targetRank] || []) : [];
                 const dmgs = mapData.damage ? (mapData.damage[targetRank] || []) : [];
                 const supps = mapData.support ? (mapData.support[targetRank] || []) : [];
+                
+                // 全ロール結合時の重複削除
                 const combined = [...tanks, ...dmgs, ...supps];
                 const seen = new Set();
                 rawHeroes = combined.filter(h => {
@@ -79,6 +76,7 @@ const server = http.createServer((req, res) => {
                 }
             }
 
+            // 名簿フィルタ
             let allowedNames = [];
             if (targetRole === 'all') {
                 allowedNames = [...HERO_ROLES.tank, ...HERO_ROLES.damage, ...HERO_ROLES.support];
@@ -88,42 +86,67 @@ const server = http.createServer((req, res) => {
             let cleanHeroes = rawHeroes.filter(h => allowedNames.includes(h.name));
             if (cleanHeroes.length === 0 && rawHeroes.length > 0) cleanHeroes = rawHeroes;
 
-            const stats = cleanHeroes.map(h => {
+            // ■■■ ここが重要：数値変換とスコア計算 ■■■
+            
+            // 1. 数値化
+            const processedHeroes = cleanHeroes.map(h => {
                 const win = parseFloat(h.winRate.replace('%', '')) || 0;
-                return { ...h, winVal: win };
+                const pick = parseFloat(h.pickRate.replace('%', '')) || 0;
+                return { ...h, winVal: win, pickVal: pick };
             });
 
-            const totalWin = stats.reduce((sum, h) => sum + h.winVal, 0);
-            const avgWin = totalWin / (stats.length || 1);
-            const variance = stats.reduce((sum, h) => sum + Math.pow(h.winVal - avgWin, 2), 0) / (stats.length || 1);
-            const stdDev = Math.sqrt(variance) || 1;
+            // 2. 勝率と使用率、それぞれの平均と標準偏差を計算
+            const winStats = calculateStats(processedHeroes.map(h => h.winVal));
+            const pickStats = calculateStats(processedHeroes.map(h => h.pickVal));
 
+            // 3. 偏差値計算と合体
             const tierResult = { S: [], A: [], B: [], C: [], D: [] };
-            stats.forEach(h => {
-                const zScore = (h.winVal - avgWin) / stdDev;
-                const tScore = 50 + (zScore * 10);
-                const tier = getTierFromTScore(tScore);
-                h.tScore = tScore.toFixed(1);
+
+            processedHeroes.forEach(h => {
+                // 勝率の偏差値 (Win T-Score)
+                const winZ = (h.winVal - winStats.avg) / winStats.stdDev;
+                const winT = 50 + (winZ * 10);
+
+                // 使用率の偏差値 (Pick T-Score)
+                const pickZ = (h.pickVal - pickStats.avg) / pickStats.stdDev;
+                const pickT = 50 + (pickZ * 10);
+
+                // ★最終スコア計算 (重み付け平均)
+                // 勝率 1.0 : 使用率 0.7 の比率で評価
+                const weightWin = 1.0;
+                const weightPick = 0.7;
+                const finalScore = ((winT * weightWin) + (pickT * weightPick)) / (weightWin + weightPick);
+
+                const tier = getTierFromScore(finalScore);
+                
+                // 表示用に値を保存
+                h.score = finalScore.toFixed(1);
+                h.winT = winT.toFixed(1);
+                
                 tierResult[tier].push(h);
             });
+
+            // スコア順にソート
             Object.keys(tierResult).forEach(t => {
-                tierResult[t].sort((a, b) => b.winVal - a.winVal);
+                tierResult[t].sort((a, b) => b.score - a.score);
             });
 
-            // 収集済みの全マップリスト
-            const availableMaps = Object.keys(json.data);
+            // ■ 修正: マップリストから 'tank', 'damage' などを除外
+            const ignoreKeys = ['tank', 'damage', 'support', 'meta', 'lastUpdated'];
+            const availableMaps = Object.keys(json.data).filter(key => !ignoreKeys.includes(key));
 
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ 
                 lastUpdated: json.lastUpdated,
                 tierData: tierResult,
-                meta: { avg: avgWin.toFixed(1), role: targetRole, map: targetMap },
+                meta: { avg: winStats.avg.toFixed(1), role: targetRole, map: targetMap },
                 availableMaps: availableMaps 
             }));
         });
         return;
     }
 
+    // ファイル配信
     let filePath = '.' + req.url;
     if (filePath === './') filePath = './index.html';
     const extname = path.extname(filePath);
@@ -146,5 +169,5 @@ const server = http.createServer((req, res) => {
     });
 });
 
-console.log(`🚀 公開用サーバー起動 (http://localhost:${PORT})`);
+console.log(`🚀 サーバー起動 (http://localhost:${PORT})`);
 server.listen(PORT);

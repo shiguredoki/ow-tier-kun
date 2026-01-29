@@ -3,31 +3,24 @@ const stealth = require('puppeteer-extra-plugin-stealth')();
 const fs = require('fs');
 chromium.use(stealth);
 
-// ■■■ 設定：主要なライバル・プレイ用マップ一覧 ■■■
-// ※シーズンによってプールが変わるので適宜調整してください
+// ■■■ 収集設定 ■■■
+// 収集対象のマップリスト
 const TARGET_MAPS = [
-    // --- 必須 ---
     'all-maps',
-
-    // --- エスコート ---
+    // エスコート
     'circuit-royal', 'dorado', 'havana', 'junkertown', 
     'rialto', 'route-66', 'shambali-monastery', 'watchpoint-gibraltar',
-
-    // --- ハイブリッド ---
+    // ハイブリッド
     'blizzard-world', 'eichenwalde', 'hollywood', 'midtown', 
     'numbani', 'paraiso', 'kings-row',
-
-    // --- コントロール ---
+    // コントロール
     'busan', 'ilios', 'lijiang-tower', 'nepal', 'oasis', 
     'samoa', 'antarctic-peninsula',
-
-    // --- プッシュ ---
+    // プッシュ
     'colosseo', 'esperanca', 'new-queen-street', 'runasapi',
-
-    // --- フラッシュポイント ---
+    // フラッシュポイント
     'new-junk-city', 'suravasa',
-
-    // --- クラッシュ ---
+    // クラッシュ
     'hanaoka', 'throne-of-anubis'
 ];
 
@@ -38,22 +31,19 @@ const CONFIG = {
 };
 
 (async () => {
-    console.log('🏭 全マップ完全収集機、起動します。');
-    console.log(`📋 対象マップ数: ${TARGET_MAPS.length}個`);
-    console.log('☕ 時間がかかります（目安: 10分）。コーヒーでも飲んでお待ちください。');
-
-    const browser = await chromium.launch({ headless: true }); // 高速化のため画面表示なし
+    console.log('🏭 全マップ完全収集機 (GM対応版)、起動します。');
+    
+    const browser = await chromium.launch({ headless: true });
     const context = await browser.newContext({ locale: 'ja-JP' });
     const page = await context.newPage();
 
-    // 既存データの読み込み（途中再開できるように）
     let fullData = { meta: CONFIG, lastUpdated: "", data: {} };
     try {
         if (fs.existsSync('data.json')) {
             fullData = JSON.parse(fs.readFileSync('data.json', 'utf8'));
         }
     } catch (e) {
-        console.log("⚠️ 新規データファイルを作成します");
+        console.log("⚠️ 新規作成します");
     }
 
     const ROLES = [
@@ -62,37 +52,34 @@ const CONFIG = {
         { label: 'サポート', param: 'Support', key: 'support' }
     ];
 
-    const TIER_LABELS = [
-        'すべてのティア', 'ブロンズ', 'シルバー', 'ゴールド', 
-        'プラチナ', 'ダイヤモンド', 'マスター', 'グランドマスター＆チャンピオン'
-    ];
-
     // --- メインループ ---
     for (const mapId of TARGET_MAPS) {
         console.log(`\n###################################`);
         console.log(`🗺️ マップ: [${mapId}] 収集中...`);
 
-        // データ枠の確保
         if (!fullData.data[mapId]) {
             fullData.data[mapId] = { tank: {}, damage: {}, support: {} };
         }
 
         for (const role of ROLES) {
             process.stdout.write(`  🛡️ ${role.label}: `);
-            
             const targetUrl = `https://overwatch.blizzard.com/ja-jp/rates/?input=${CONFIG.input}&map=${mapId}&region=${CONFIG.region}&role=${role.param}&rq=1&tier=All`;
             
             try {
                 await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
-                // ページ移動直後は少し待つ
                 await page.waitForTimeout(1000);
 
                 const tierSelect = page.locator('select').nth(3);
 
-                for (const rankLabel of TIER_LABELS) {
-                    // ランク切り替え
+                // ★修正: 選択肢のテキストを動的に取得（名前ミス防止）
+                const options = await tierSelect.evaluate(select => {
+                    return Array.from(select.options).map(o => o.text);
+                });
+
+                // 取得した選択肢を順番に回す
+                for (const rankLabel of options) {
                     await tierSelect.selectOption({ label: rankLabel });
-                    await page.waitForTimeout(300); // UI反映待ち（短縮）
+                    await page.waitForTimeout(300); // 待ち時間
 
                     // データ取得
                     const heroes = await page.$$eval('.hero-name', (elements) => {
@@ -112,8 +99,8 @@ const CONFIG = {
                         }).filter(h => h !== null);
                     });
 
-                    // ID変換
-                    let rankId = rankLabel;
+                    // ID変換（部分一致で判定）
+                    let rankId = 'unknown';
                     if (rankLabel.includes('すべて')) rankId = 'all';
                     else if (rankLabel.includes('ブロンズ')) rankId = 'bronze';
                     else if (rankLabel.includes('シルバー')) rankId = 'silver';
@@ -121,7 +108,8 @@ const CONFIG = {
                     else if (rankLabel.includes('プラチナ')) rankId = 'platinum';
                     else if (rankLabel.includes('ダイヤモンド')) rankId = 'diamond';
                     else if (rankLabel.includes('マスター')) rankId = 'master';
-                    else if (rankLabel.includes('グランド')) rankId = 'grandmaster_champion';
+                    // ★GMとチャンピオンをここでキャッチ
+                    else if (rankLabel.includes('グランド') || rankLabel.includes('チャンピオン')) rankId = 'grandmaster_champion';
 
                     fullData.data[mapId][role.key][rankId] = heroes;
                 }
@@ -132,11 +120,10 @@ const CONFIG = {
             }
         }
         
-        // マップ1つ終わるごとに保存（クラッシュ対策）
         fullData.lastUpdated = new Date().toLocaleString('ja-JP');
         fs.writeFileSync('data.json', JSON.stringify(fullData, null, 2));
     }
 
-    console.log(`\n\n🎉 全マップの収集完了！お疲れ様でした。`);
+    console.log(`\n\n🎉 全マップの収集完了！`);
     await browser.close();
 })();
