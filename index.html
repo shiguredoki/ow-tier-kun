@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OWティアくん (Public Ver)</title>
+    <style>
+        body { background-color: #121212; color: #fff; font-family: 'Segoe UI', sans-serif; margin: 0; padding: 15px; }
+        h1 { text-align: center; color: #f99e1a; margin: 10px 0 20px 0; font-size: 30px; text-shadow: 0 0 12px rgba(249, 158, 26, 0.4); }
+        .controls { text-align: center; margin-bottom: 25px; display: flex; justify-content: center; align-items: center; gap: 10px; flex-wrap: wrap; }
+        .role-btn { padding: 10px 16px; font-size: 15px; border-radius: 5px; border: 2px solid #444; background: #222; color: #aaa; cursor: pointer; font-weight: bold; transition: 0.2s; display: flex; align-items: center; gap: 6px; }
+        .role-btn:hover { background: #333; color: #fff; }
+        .role-btn.active { border-color: #f99e1a; background: #f99e1a; color: #000; box-shadow: 0 0 10px rgba(249, 158, 26, 0.4); }
+        .role-btn[data-role="all"].active { background: #fff; border-color: #fff; color: #000; }
+        .role-btn[data-role="tank"].active { background: #2b4695; border-color: #2b4695; color: white; }
+        .role-btn[data-role="damage"].active { background: #a1232b; border-color: #a1232b; color: white; }
+        .role-btn[data-role="support"].active { background: #267538; border-color: #267538; color: white; }
+        
+        select { padding: 9px 15px; font-size: 16px; border-radius: 5px; font-weight: bold; background: #333; color: white; border: 1px solid #555; cursor: pointer; margin-left: 5px; }
+        
+        #tierListContainer { max-width: 1200px; margin: 0 auto; min-height: 400px; }
+        .tier-row { display: flex; margin-bottom: 10px; background: #1e1e1e; border-radius: 8px; min-height: 105px; box-shadow: 0 3px 6px rgba(0,0,0,0.4); }
+        .tier-label { width: 85px; display: flex; align-items: center; justify-content: center; font-size: 40px; font-weight: 900; text-shadow: 1px 1px 3px rgba(0,0,0,0.4); color: #000; flex-shrink: 0; border-top-left-radius: 8px; border-bottom-left-radius: 8px; }
+        .bg-s { background-color: #ff7f7f; } .bg-a { background-color: #ffbf7f; } .bg-b { background-color: #ffdf7f; } .bg-c { background-color: #ffff7f; } .bg-d { background-color: #bfff7f; }
+        .tier-heroes { display: flex; flex-wrap: wrap; padding: 10px; gap: 10px; align-items: center; flex-grow: 1; }
+        .hero-card { position: relative; width: 81px; height: 81px; border-radius: 6px; background: #333; transition: transform 0.2s, z-index 0.2s; cursor: pointer; overflow: visible; }
+        .hero-card::after { content: ""; position: absolute; top: 0; left: 0; width: 100%; height: 100%; border-radius: 6px; border: 2px solid transparent; pointer-events: none; transition: border-color 0.2s; z-index: 2; }
+        .hero-card img { width: 100%; height: 100%; object-fit: cover; border-radius: 6px; display: block; }
+        .hero-card:hover { transform: scale(1.2); z-index: 100; box-shadow: 0 0 18px rgba(0,0,0,0.8); }
+        .hero-card:hover::after { border-color: #fff; }
+        .hero-card .tooltip { visibility: hidden; opacity: 0; position: absolute; bottom: 90px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.95); color: white; font-size: 13px; white-space: nowrap; padding: 6px 10px; border-radius: 5px; transition: 0.15s; pointer-events: none; border: 1px solid #777; z-index: 101; box-shadow: 0 4px 10px rgba(0,0,0,0.5); }
+        .hero-card .tooltip::after { content: ""; position: absolute; top: 100%; left: 50%; margin-left: -6px; border-width: 6px; border-style: solid; border-color: rgba(0,0,0,0.95) transparent transparent transparent; }
+        .hero-card:hover .tooltip { visibility: visible; opacity: 1; bottom: 98px; }
+        .update-time { text-align: center; color: #555; margin-top: 20px; font-size: 12px; }
+    </style>
+</head>
+<body>
+
+    <h1>📊 OWティアくん</h1>
+
+    <div class="controls">
+        <button class="role-btn active" data-role="all" onclick="changeRole('all')">🌎 すべてのロール</button>
+        <button class="role-btn" data-role="tank" onclick="changeRole('tank')">🛡️ タンク</button>
+        <button class="role-btn" data-role="damage" onclick="changeRole('damage')">⚔️ ダメージ</button>
+        <button class="role-btn" data-role="support" onclick="changeRole('support')">💉 サポート</button>
+
+        <div style="display:flex; flex-direction:column; align-items:flex-start; margin-left: 20px;">
+            <select id="mapSelect">
+                <option value="all-maps">すべてのマップ</option>
+            </select>
+        </div>
+
+        <div style="display:flex; flex-direction:column; align-items:flex-start;">
+            <select id="rankSelect">
+                <option value="all">すべてのティア</option>
+                <option value="bronze">ブロンズ</option>
+                <option value="silver">シルバー</option>
+                <option value="gold">ゴールド</option>
+                <option value="platinum">プラチナ</option>
+                <option value="diamond">ダイヤモンド</option>
+                <option value="master">マスター</option>
+                <option value="grandmaster_champion">GM & チャンピオン</option>
+            </select>
+        </div>
+    </div>
+
+    <div id="tierListContainer"></div>
+    <div class="update-time" id="lastUpdated"></div>
+
+    <script>
+        const TIERS = ['S', 'A', 'B', 'C', 'D'];
+        const TIER_COLORS = { S: 'bg-s', A: 'bg-a', B: 'bg-b', C: 'bg-c', D: 'bg-d' };
+        
+        let currentRole = 'all';
+
+        // マップIDを日本語にする辞書
+        const MAP_NAMES = {
+            'all-maps': 'すべてのマップ',
+            'kings-row': 'キングス・ロウ', 'circuit-royal': 'サーキット・ロイヤル', 'dorado': 'ドラド',
+            'havana': 'ハバナ', 'junkertown': 'ジャンカータウン', 'rialto': 'リアルト',
+            'route-66': 'ルート66', 'shambali-monastery': 'シャンバリ寺院', 'watchpoint-gibraltar': 'ウォッチポイント',
+            'blizzard-world': 'ブリザード・ワールド', 'eichenwalde': 'アイヒェンヴァルデ', 'hollywood': 'ハリウッド',
+            'midtown': 'ミッドタウン', 'numbani': 'ヌンバニ', 'paraiso': 'パライソ',
+            'busan': '釜山', 'ilios': 'イリオス', 'lijiang-tower': 'レイコウ・タワー',
+            'nepal': 'ネパール', 'oasis': 'オアシス', 'samoa': 'サモア', 'antarctic-peninsula': '南極半島',
+            'colosseo': 'コロッセオ', 'esperanca': 'エスペランサ', 'new-queen-street': 'ニュー・クイーン・ストリート',
+            'runasapi': 'ルナサピ', 'new-junk-city': 'ニュージャンクシティ', 'suravasa': 'スラヴァーサ',
+            'hanaoka': 'ハナオカ', 'throne-of-anubis': 'アヌビスの神殿'
+        };
+
+        function changeRole(role) {
+            currentRole = role;
+            document.querySelectorAll('.role-btn').forEach(btn => btn.classList.remove('active'));
+            document.querySelector(`.role-btn[data-role="${role}"]`).classList.add('active');
+            updateTierList();
+        }
+
+        async function updateTierList() {
+            try {
+                const rank = document.getElementById('rankSelect').value;
+                const map = document.getElementById('mapSelect').value;
+
+                const res = await fetch(`/api/tier?rank=${rank}&role=${currentRole}&map=${map}`);
+                if (!res.ok) throw new Error('API Error');
+                const data = await res.json();
+
+                // マッププルダウンの自動更新（サーバーにあるデータだけを表示）
+                const mapSelect = document.getElementById('mapSelect');
+                if (data.availableMaps && data.availableMaps.length > 0) {
+                    const currentVal = mapSelect.value;
+                    // 一旦クリアせず、差分があれば更新したいが、簡略化のため
+                    // 選択肢の数が変わった時だけ再生成する
+                    if (mapSelect.options.length !== data.availableMaps.length) {
+                        mapSelect.innerHTML = '';
+                        data.availableMaps.forEach(mapId => {
+                            const option = document.createElement('option');
+                            option.value = mapId;
+                            option.innerText = MAP_NAMES[mapId] || mapId; 
+                            mapSelect.appendChild(option);
+                        });
+                        // 以前の選択を復元（もしリストにあれば）
+                        if (data.availableMaps.includes(currentVal)) {
+                            mapSelect.value = currentVal;
+                        } else {
+                            mapSelect.value = 'all-maps';
+                        }
+                    }
+                }
+
+                if (data.error) {
+                    document.getElementById('tierListContainer').innerHTML = `<h3 style="text-align:center;color:#888;">${data.error}</h3>`;
+                    return;
+                }
+
+                document.getElementById('lastUpdated').innerText = 
+                    `データ更新: ${data.lastUpdated} / 平均勝率: ${data.meta.avg}% / マップ: ${data.meta.map}`;
+                
+                const container = document.getElementById('tierListContainer');
+                container.innerHTML = '';
+
+                TIERS.forEach(tier => {
+                    const heroes = data.tierData[tier];
+                    const row = document.createElement('div');
+                    row.className = 'tier-row';
+                    const label = document.createElement('div');
+                    label.className = `tier-label ${TIER_COLORS[tier]}`;
+                    label.innerText = tier;
+                    row.appendChild(label);
+                    const heroArea = document.createElement('div');
+                    heroArea.className = 'tier-heroes';
+
+                    heroes.forEach(h => {
+                        const card = document.createElement('div');
+                        card.className = 'hero-card';
+                        let imgHtml = h.iconUrl 
+                            ? `<img src="${h.iconUrl}" alt="${h.name}">` 
+                            : `<div style="display:flex;align-items:center;justify-content:center;height:100%;font-size:10px;color:#888;">${h.name}</div>`;
+
+                        card.innerHTML = `
+                            ${imgHtml}
+                            <div class="tooltip">
+                                <strong style="color:#f99e1a;">${h.name}</strong><br>
+                                Win: <span style="color:#2ecc71;">${h.winRate}</span> (T:${h.tScore})<br>
+                                Pick: <span style="color:#3498db;">${h.pickRate}</span>
+                            </div>
+                        `;
+                        heroArea.appendChild(card);
+                    });
+                    row.appendChild(heroArea);
+                    container.appendChild(row);
+                });
+
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
+        updateTierList();
+        document.getElementById('rankSelect').addEventListener('change', updateTierList);
+        document.getElementById('mapSelect').addEventListener('change', updateTierList);
+    </script>
+</body>
+</html>

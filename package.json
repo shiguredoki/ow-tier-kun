@@ -1,0 +1,16 @@
+{
+  "name": "ow-tier-kun",
+  "version": "1.0.0",
+  "description": "Overwatch Tier List App",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "playwright-extra": "^4.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2"
+  }
+}
